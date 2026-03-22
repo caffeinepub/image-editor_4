@@ -1,0 +1,113 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: "Bricolage Grotesque";
+  src: url("/assets/fonts/BricolageGrotesque.woff2") format("woff2");
+  font-weight: 200 800;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Satoshi";
+  src: url("/assets/fonts/Satoshi.woff2") format("woff2");
+  font-weight: 300 700;
+  font-display: swap;
+}
+
+@layer base {
+  :root {
+    --radius: 0.5rem;
+
+    /* Dark workspace theme */
+    --background: 0.14 0.005 260;
+    --foreground: 0.94 0.01 260;
+    --card: 0.18 0.008 260;
+    --card-foreground: 0.94 0.01 260;
+    --popover: 0.2 0.01 260;
+    --popover-foreground: 0.94 0.01 260;
+    --primary: 0.78 0.15 60;
+    --primary-foreground: 0.12 0.005 260;
+    --secondary: 0.22 0.01 260;
+    --secondary-foreground: 0.88 0.01 260;
+    --muted: 0.22 0.008 260;
+    --muted-foreground: 0.6 0.01 260;
+    --accent: 0.78 0.15 60;
+    --accent-foreground: 0.12 0.005 260;
+    --destructive: 0.6 0.22 25;
+    --destructive-foreground: 0.98 0.005 0;
+    --border: 0.28 0.01 260;
+    --input: 0.24 0.01 260;
+    --ring: 0.78 0.15 60;
+    --chart-1: 0.78 0.15 60;
+    --chart-2: 0.6 0.18 184;
+    --chart-3: 0.7 0.14 140;
+    --chart-4: 0.65 0.18 303;
+    --chart-5: 0.72 0.2 25;
+    --sidebar: 0.16 0.007 260;
+    --sidebar-foreground: 0.94 0.01 260;
+    --sidebar-primary: 0.78 0.15 60;
+    --sidebar-primary-foreground: 0.12 0.005 260;
+    --sidebar-accent: 0.22 0.01 260;
+    --sidebar-accent-foreground: 0.88 0.01 260;
+    --sidebar-border: 0.28 0.01 260;
+    --sidebar-ring: 0.78 0.15 60;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: "Satoshi", "Segoe UI", sans-serif;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: "Bricolage Grotesque", "Segoe UI", sans-serif;
+  }
+}
+
+@layer utilities {
+  .canvas-workspace {
+    background-color: oklch(0.11 0.006 260);
+    background-image: radial-gradient(
+        circle at 25% 25%,
+        oklch(0.18 0.03 260 / 0.3) 0%,
+        transparent 50%
+      ),
+      radial-gradient(
+        circle at 75% 75%,
+        oklch(0.16 0.02 240 / 0.2) 0%,
+        transparent 50%
+      );
+  }
+
+  .toolbar-glass {
+    background: oklch(0.18 0.01 260 / 0.92);
+    backdrop-filter: blur(12px);
+    border: 1px solid oklch(0.32 0.015 260 / 0.6);
+  }
+
+  .tool-btn-active {
+    background: oklch(0.78 0.15 60 / 0.15);
+    border-color: oklch(0.78 0.15 60 / 0.5);
+    color: oklch(0.78 0.15 60);
+  }
+
+  .checkerboard {
+    background-image: linear-gradient(
+        45deg,
+        oklch(0.22 0.005 260) 25%,
+        transparent 25%
+      ), linear-gradient(-45deg, oklch(0.22 0.005 260) 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, oklch(0.22 0.005 260) 75%),
+      linear-gradient(-45deg, transparent 75%, oklch(0.22 0.005 260) 75%);
+    background-size: 16px 16px;
+    background-position: 0 0, 0 8px, 8px -8px, -8px 0px;
+  }
+}
