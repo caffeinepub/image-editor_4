@@ -24,6 +24,7 @@ import {
   ImageIcon,
   Pencil,
   Redo2,
+  Shapes,
   Trash2,
   Type,
   Undo2,
@@ -32,7 +33,18 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
-type Tool = "text" | "draw";
+type Tool = "text" | "draw" | "figure";
+
+type FigureShape =
+  | "line-arrow"
+  | "block-arrow"
+  | "rectangle"
+  | "triangle"
+  | "circle"
+  | "ellipse"
+  | "star"
+  | "pentagon"
+  | "hexagon";
 
 interface TextLayer {
   id: string;
@@ -43,6 +55,7 @@ interface TextLayer {
   fontFamily: string;
   fontSize: number;
   color: string;
+  rotation: number;
 }
 
 interface StrokeLayer {
@@ -53,7 +66,19 @@ interface StrokeLayer {
   thickness: number;
 }
 
-type Layer = TextLayer | StrokeLayer;
+interface FigureLayer {
+  id: string;
+  type: "figure";
+  shape: FigureShape;
+  x: number; // center x, normalized 0-1
+  y: number; // center y, normalized 0-1
+  width: number; // normalized 0-1
+  height: number; // normalized 0-1
+  rotation: number; // radians
+  color: string;
+}
+
+type Layer = TextLayer | StrokeLayer | FigureLayer;
 
 const FONT_OPTIONS = [
   "Calibri",
@@ -82,6 +107,18 @@ const PRESET_COLORS = [
   "#888888",
 ];
 
+const FIGURE_SHAPES: { id: FigureShape; label: string }[] = [
+  { id: "line-arrow", label: "Arrow" },
+  { id: "block-arrow", label: "Block Arrow" },
+  { id: "rectangle", label: "Rectangle" },
+  { id: "triangle", label: "Triangle" },
+  { id: "circle", label: "Circle" },
+  { id: "ellipse", label: "Ellipse" },
+  { id: "star", label: "Star" },
+  { id: "pentagon", label: "Pentagon" },
+  { id: "hexagon", label: "Hexagon" },
+];
+
 const DEFAULT_COLOR = "#ff0000";
 const DEFAULT_FONT = "Calibri";
 const DEFAULT_FONT_SIZE = 24;
@@ -91,6 +128,100 @@ const TEXT_PAD = 4;
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
+}
+
+function drawFigurePath(
+  ctx: CanvasRenderingContext2D,
+  shape: FigureShape,
+  w: number,
+  h: number,
+) {
+  ctx.beginPath();
+  switch (shape) {
+    case "rectangle":
+      ctx.rect(-w / 2, -h / 2, w, h);
+      ctx.fill();
+      break;
+    case "circle":
+      ctx.arc(0, 0, Math.min(w, h) / 2, 0, 2 * Math.PI);
+      ctx.fill();
+      break;
+    case "ellipse":
+      ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, 2 * Math.PI);
+      ctx.fill();
+      break;
+    case "triangle":
+      ctx.moveTo(0, -h / 2);
+      ctx.lineTo(w / 2, h / 2);
+      ctx.lineTo(-w / 2, h / 2);
+      ctx.closePath();
+      ctx.fill();
+      break;
+    case "pentagon": {
+      const rp = Math.min(w, h) / 2;
+      for (let i = 0; i < 5; i++) {
+        const angle = (i * 2 * Math.PI) / 5 - Math.PI / 2;
+        if (i === 0) ctx.moveTo(rp * Math.cos(angle), rp * Math.sin(angle));
+        else ctx.lineTo(rp * Math.cos(angle), rp * Math.sin(angle));
+      }
+      ctx.closePath();
+      ctx.fill();
+      break;
+    }
+    case "hexagon": {
+      const rh = Math.min(w, h) / 2;
+      for (let i = 0; i < 6; i++) {
+        const angle = (i * 2 * Math.PI) / 6;
+        if (i === 0) ctx.moveTo(rh * Math.cos(angle), rh * Math.sin(angle));
+        else ctx.lineTo(rh * Math.cos(angle), rh * Math.sin(angle));
+      }
+      ctx.closePath();
+      ctx.fill();
+      break;
+    }
+    case "star": {
+      const outerR = Math.min(w, h) / 2;
+      const innerR = outerR * 0.4;
+      for (let i = 0; i < 10; i++) {
+        const angle = (i * Math.PI) / 5 - Math.PI / 2;
+        const r = i % 2 === 0 ? outerR : innerR;
+        if (i === 0) ctx.moveTo(r * Math.cos(angle), r * Math.sin(angle));
+        else ctx.lineTo(r * Math.cos(angle), r * Math.sin(angle));
+      }
+      ctx.closePath();
+      ctx.fill();
+      break;
+    }
+    case "line-arrow": {
+      const aw = Math.max(8, Math.min(20, w * 0.25));
+      const ah = Math.max(5, Math.min(12, h * 0.4));
+      ctx.lineWidth = Math.max(2, h * 0.12);
+      ctx.moveTo(-w / 2, 0);
+      ctx.lineTo(w / 2 - aw, 0);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(w / 2, 0);
+      ctx.lineTo(w / 2 - aw, -ah);
+      ctx.lineTo(w / 2 - aw, ah);
+      ctx.closePath();
+      ctx.fill();
+      break;
+    }
+    case "block-arrow": {
+      const headW = w * 0.38;
+      const bodyH = h * 0.5;
+      ctx.moveTo(-w / 2, -bodyH / 2);
+      ctx.lineTo(w / 2 - headW, -bodyH / 2);
+      ctx.lineTo(w / 2 - headW, -h / 2);
+      ctx.lineTo(w / 2, 0);
+      ctx.lineTo(w / 2 - headW, h / 2);
+      ctx.lineTo(w / 2 - headW, bodyH / 2);
+      ctx.lineTo(-w / 2, bodyH / 2);
+      ctx.closePath();
+      ctx.fill();
+      break;
+    }
+  }
 }
 
 function renderLayers(
@@ -127,9 +258,33 @@ function renderLayers(
       const px = layer.x * cw;
       const py = layer.y * ch;
       const lines = layer.content.split("\n");
-      lines.forEach((line, i) => {
-        ctx.fillText(line, px, py + i * layer.fontSize * 1.2);
-      });
+      const textW = Math.max(...lines.map((l) => ctx.measureText(l).width), 40);
+      const textH = lines.length * layer.fontSize * 1.2;
+      if (layer.rotation) {
+        ctx.translate(px + textW / 2, py + textH / 2);
+        ctx.rotate(layer.rotation);
+        lines.forEach((line, i) => {
+          ctx.fillText(line, -textW / 2, -textH / 2 + i * layer.fontSize * 1.2);
+        });
+      } else {
+        lines.forEach((line, i) => {
+          ctx.fillText(line, px, py + i * layer.fontSize * 1.2);
+        });
+      }
+      ctx.restore();
+    } else if (layer.type === "figure") {
+      const cx = layer.x * cw;
+      const cy = layer.y * ch;
+      const w = layer.width * cw;
+      const h = layer.height * ch;
+      if (w < 2 && h < 2) continue;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(layer.rotation);
+      ctx.fillStyle = layer.color;
+      ctx.strokeStyle = layer.color;
+      ctx.lineWidth = 2;
+      drawFigurePath(ctx, layer.shape, w, h);
       ctx.restore();
     }
   }
@@ -153,6 +308,14 @@ function getLayerBounds(
       h: textH + TEXT_PAD * 2,
     };
   }
+  if (layer.type === "figure") {
+    const cx = layer.x * cw;
+    const cy = layer.y * ch;
+    const hw = (layer.width * cw) / 2 + 6;
+    const hh = (layer.height * ch) / 2 + 6;
+    return { x: cx - hw, y: cy - hh, w: hw * 2, h: hh * 2 };
+  }
+  // stroke
   if (layer.points.length === 0) return { x: 0, y: 0, w: 10, h: 10 };
   let minX = Number.POSITIVE_INFINITY;
   let minY = Number.POSITIVE_INFINITY;
@@ -201,6 +364,176 @@ function DragHandleDots() {
   );
 }
 
+function ShapeIcon({ shape }: { shape: FigureShape }) {
+  const stroke = "currentColor";
+  const fill = "currentColor";
+  switch (shape) {
+    case "line-arrow":
+      return (
+        <svg
+          width="32"
+          height="32"
+          viewBox="0 0 32 32"
+          fill="none"
+          aria-hidden="true"
+        >
+          <line
+            x1="3"
+            y1="16"
+            x2="22"
+            y2="16"
+            stroke={stroke}
+            strokeWidth="2"
+            strokeLinecap="round"
+          />
+          <polygon points="29,16 21,11 21,21" fill={fill} />
+        </svg>
+      );
+    case "block-arrow":
+      return (
+        <svg
+          width="32"
+          height="32"
+          viewBox="0 0 32 32"
+          fill="none"
+          aria-hidden="true"
+        >
+          <path
+            d="M3,13 L19,13 L19,9 L29,16 L19,23 L19,19 L3,19 Z"
+            fill={fill}
+          />
+        </svg>
+      );
+    case "rectangle":
+      return (
+        <svg
+          width="32"
+          height="32"
+          viewBox="0 0 32 32"
+          fill="none"
+          aria-hidden="true"
+        >
+          <rect x="4" y="8" width="24" height="16" fill={fill} />
+        </svg>
+      );
+    case "triangle":
+      return (
+        <svg
+          width="32"
+          height="32"
+          viewBox="0 0 32 32"
+          fill="none"
+          aria-hidden="true"
+        >
+          <polygon points="16,4 28,28 4,28" fill={fill} />
+        </svg>
+      );
+    case "circle":
+      return (
+        <svg
+          width="32"
+          height="32"
+          viewBox="0 0 32 32"
+          fill="none"
+          aria-hidden="true"
+        >
+          <circle cx="16" cy="16" r="12" fill={fill} />
+        </svg>
+      );
+    case "ellipse":
+      return (
+        <svg
+          width="32"
+          height="32"
+          viewBox="0 0 32 32"
+          fill="none"
+          aria-hidden="true"
+        >
+          <ellipse cx="16" cy="16" rx="14" ry="9" fill={fill} />
+        </svg>
+      );
+    case "star":
+      return (
+        <svg
+          width="32"
+          height="32"
+          viewBox="0 0 32 32"
+          fill="none"
+          aria-hidden="true"
+        >
+          <polygon
+            points="16,4 18.59,12.44 26.46,12.6 20.18,17.36 22.47,24.9 16,20.4 9.53,24.9 11.82,17.36 5.54,12.6 13.41,12.44"
+            fill={fill}
+          />
+        </svg>
+      );
+    case "pentagon":
+      return (
+        <svg
+          width="32"
+          height="32"
+          viewBox="0 0 32 32"
+          fill="none"
+          aria-hidden="true"
+        >
+          <polygon
+            points="16,4 27.46,12.6 23.09,25.9 8.91,25.9 4.54,12.6"
+            fill={fill}
+          />
+        </svg>
+      );
+    case "hexagon":
+      return (
+        <svg
+          width="32"
+          height="32"
+          viewBox="0 0 32 32"
+          fill="none"
+          aria-hidden="true"
+        >
+          <polygon
+            points="27,16 21.5,25.5 10.5,25.5 5,16 10.5,6.5 21.5,6.5"
+            fill={fill}
+          />
+        </svg>
+      );
+    default:
+      return null;
+  }
+}
+
+// Corner handle component
+function CornerHandle({
+  style,
+  cursor,
+  onMouseDown,
+  title,
+}: {
+  style: React.CSSProperties;
+  cursor: string;
+  onMouseDown: (e: React.MouseEvent) => void;
+  title: string;
+}) {
+  return (
+    <div
+      title={title}
+      style={{
+        position: "absolute",
+        width: 14,
+        height: 14,
+        background: "white",
+        border: "1px solid hsl(var(--primary))",
+        borderRadius: 2,
+        zIndex: 30,
+        cursor,
+        pointerEvents: "all",
+        ...style,
+      }}
+      onMouseDown={onMouseDown}
+    />
+  );
+}
+
 export default function ImageEditor() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -213,18 +546,16 @@ export default function ImageEditor() {
   const [layers, setLayers] = useState<Layer[]>([]);
   const [history, setHistory] = useState<Layer[][]>([[]]);
   const [historyIndex, setHistoryIndex] = useState(0);
-  // selectedId drives ALL selection — for both strokes and text layers.
-  // There is no separate "inlineEdit" state. The textarea is shown whenever
-  // selectedId points to a text layer — exactly as the selection frame is shown
-  // for a stroke layer.
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tool, setTool] = useState<Tool>("draw");
+  const [selectedShape, setSelectedShape] = useState<FigureShape>("rectangle");
   const [color, setColor] = useState(DEFAULT_COLOR);
   const [hexInput, setHexInput] = useState(DEFAULT_COLOR);
   const [fontFamily, setFontFamily] = useState(DEFAULT_FONT);
   const [fontSize, setFontSize] = useState(DEFAULT_FONT_SIZE);
   const [thickness, setThickness] = useState(DEFAULT_THICKNESS);
   const [isDrawing, setIsDrawing] = useState(false);
+  const [isFiguring, setIsFiguring] = useState(false);
   const [isDraggingHandle, setIsDraggingHandle] = useState(false);
   const [dropHighlight, setDropHighlight] = useState(false);
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 });
@@ -244,8 +575,30 @@ export default function ImageEditor() {
     origPoints?: { x: number; y: number }[];
   } | null>(null);
   const drawingLayerId = useRef<string | null>(null);
-  // Track isDrawing in a ref so document-level handlers can check it
   const isDrawingRef = useRef(false);
+  const isFiguringRef = useRef(false);
+  const figuringLayerId = useRef<string | null>(null);
+  const figureStartRef = useRef<{ nx: number; ny: number } | null>(null);
+
+  const resizeDragStateRef = useRef<{
+    layerId: string;
+    startMouseX: number;
+    startMouseY: number;
+    origWidth?: number;
+    origHeight?: number;
+    origPoints?: { x: number; y: number }[];
+    origFontSize?: number;
+  } | null>(null);
+
+  const rotateDragStateRef = useRef<{
+    layerId: string;
+    centerNX: number;
+    centerNY: number;
+    startAngle: number;
+    origRotation?: number;
+    origPoints?: { x: number; y: number }[];
+    origTextRotation?: number;
+  } | null>(null);
 
   useEffect(() => {
     layersRef.current = layers;
@@ -262,14 +615,14 @@ export default function ImageEditor() {
   useEffect(() => {
     isDrawingRef.current = isDrawing;
   }, [isDrawing]);
+  useEffect(() => {
+    isFiguringRef.current = isFiguring;
+  }, [isFiguring]);
 
-  // Derived: the currently selected layer (stroke or text)
   const selectedLayer = layers.find((l) => l.id === selectedId) ?? null;
-  // Derived: the currently selected text layer (if it is a text layer)
   const selectedTextLayer =
     selectedLayer?.type === "text" ? (selectedLayer as TextLayer) : null;
 
-  // Fetch global counter on mount
   useEffect(() => {
     if (!actor) return;
     actor
@@ -278,7 +631,6 @@ export default function ImageEditor() {
       .catch(() => {});
   }, [actor]);
 
-  // Sync color picker + font controls to the currently selected layer
   useEffect(() => {
     if (!selectedId) return;
     const layer = layersRef.current.find((l) => l.id === selectedId);
@@ -306,7 +658,6 @@ export default function ImageEditor() {
     pushHistoryRef.current = pushHistory;
   }, [pushHistory]);
 
-  // Apply color to selected layer — uses selectedId directly (same pattern as strokes)
   const applyColor = useCallback(
     (val: string) => {
       setColor(val);
@@ -320,10 +671,112 @@ export default function ImageEditor() {
     [selectedId],
   );
 
-  // Document-level mouse handlers for drag-handle dragging and drawing continuation
-  // outside the canvas bounds (prevents losing draw state when mouse leaves canvas).
+  // Document-level mouse handlers
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {
+      // Resize drag
+      const resize = resizeDragStateRef.current;
+      if (resize) {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const rect = canvas.getBoundingClientRect();
+        const dx = (e.clientX - resize.startMouseX) / rect.width;
+        const dy = (e.clientY - resize.startMouseY) / rect.height;
+        const shift = e.shiftKey;
+        setLayers((prev) =>
+          prev.map((l) => {
+            if (l.id !== resize.layerId) return l;
+            if (
+              l.type === "figure" &&
+              resize.origWidth !== undefined &&
+              resize.origHeight !== undefined
+            ) {
+              const newW = Math.max(0.005, resize.origWidth + dx * 2);
+              let newH: number;
+              if (shift) {
+                newH = Math.max(0.005, resize.origHeight - dy * 2);
+              } else {
+                const ratio =
+                  resize.origHeight / Math.max(0.001, resize.origWidth);
+                newH = newW * ratio;
+              }
+              return { ...l, width: newW, height: newH };
+            }
+            if (l.type === "stroke" && resize.origPoints) {
+              const pts = resize.origPoints;
+              if (pts.length === 0) return l;
+              let minX = pts[0].x;
+              let maxX = pts[0].x;
+              for (const p of pts) {
+                if (p.x < minX) minX = p.x;
+                if (p.x > maxX) maxX = p.x;
+              }
+              const origW = maxX - minX;
+              if (origW < 0.001) return l;
+              const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+              const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+              const sf = Math.max(0.05, (origW + dx * 2) / origW);
+              return {
+                ...l,
+                points: pts.map((p) => ({
+                  x: cx + (p.x - cx) * sf,
+                  y: cy + (p.y - cy) * sf,
+                })),
+              };
+            }
+            if (l.type === "text" && resize.origFontSize !== undefined) {
+              const newSize = Math.max(
+                6,
+                Math.round(resize.origFontSize * (1 + dx * 3)),
+              );
+              return { ...l, fontSize: newSize };
+            }
+            return l;
+          }),
+        );
+        return;
+      }
+
+      // Rotate drag
+      const rotate = rotateDragStateRef.current;
+      if (rotate) {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const rect = canvas.getBoundingClientRect();
+        const mx = (e.clientX - rect.left) / rect.width;
+        const my = (e.clientY - rect.top) / rect.height;
+        const angle = Math.atan2(my - rotate.centerNY, mx - rotate.centerNX);
+        const delta = angle - rotate.startAngle;
+        setLayers((prev) =>
+          prev.map((l) => {
+            if (l.id !== rotate.layerId) return l;
+            if (l.type === "figure" && rotate.origRotation !== undefined) {
+              return { ...l, rotation: rotate.origRotation + delta };
+            }
+            if (l.type === "stroke" && rotate.origPoints) {
+              const cx = rotate.centerNX;
+              const cy = rotate.centerNY;
+              return {
+                ...l,
+                points: rotate.origPoints.map((p) => {
+                  const pdx = p.x - cx;
+                  const pdy = p.y - cy;
+                  return {
+                    x: cx + pdx * Math.cos(delta) - pdy * Math.sin(delta),
+                    y: cy + pdx * Math.sin(delta) + pdy * Math.cos(delta),
+                  };
+                }),
+              };
+            }
+            if (l.type === "text" && rotate.origTextRotation !== undefined) {
+              return { ...l, rotation: rotate.origTextRotation + delta };
+            }
+            return l;
+          }),
+        );
+        return;
+      }
+
       // Handle drag-handle dragging
       const drag = handleDragStateRef.current;
       if (drag) {
@@ -337,6 +790,13 @@ export default function ImageEditor() {
             if (l.id !== drag.layerId) return l;
             if (
               l.type === "text" &&
+              drag.origX !== undefined &&
+              drag.origY !== undefined
+            ) {
+              return { ...l, x: drag.origX + dx, y: drag.origY + dy };
+            }
+            if (
+              l.type === "figure" &&
               drag.origX !== undefined &&
               drag.origY !== undefined
             ) {
@@ -357,7 +817,33 @@ export default function ImageEditor() {
         return;
       }
 
-      // Continue drawing even when mouse leaves the canvas
+      // Continue figuring
+      if (
+        isFiguringRef.current &&
+        figuringLayerId.current &&
+        figureStartRef.current
+      ) {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const rect = canvas.getBoundingClientRect();
+        const nx = (e.clientX - rect.left) / rect.width;
+        const ny = (e.clientY - rect.top) / rect.height;
+        const start = figureStartRef.current;
+        const fw = Math.abs(nx - start.nx);
+        const fh = Math.abs(ny - start.ny);
+        const cx = (nx + start.nx) / 2;
+        const cy = (ny + start.ny) / 2;
+        setLayers((prev) =>
+          prev.map((l) =>
+            l.id === figuringLayerId.current && l.type === "figure"
+              ? { ...l, x: cx, y: cy, width: fw, height: fh }
+              : l,
+          ),
+        );
+        return;
+      }
+
+      // Continue drawing
       if (isDrawingRef.current && drawingLayerId.current) {
         const canvas = canvasRef.current;
         if (!canvas) return;
@@ -375,13 +861,30 @@ export default function ImageEditor() {
     };
 
     const onMouseUp = () => {
+      if (resizeDragStateRef.current) {
+        resizeDragStateRef.current = null;
+        pushHistoryRef.current(layersRef.current);
+        return;
+      }
+      if (rotateDragStateRef.current) {
+        rotateDragStateRef.current = null;
+        pushHistoryRef.current(layersRef.current);
+        return;
+      }
       if (handleDragStateRef.current) {
         handleDragStateRef.current = null;
         setIsDraggingHandle(false);
         pushHistoryRef.current(layersRef.current);
         return;
       }
-      // Commit drawing on global mouse up
+      if (isFiguringRef.current) {
+        isFiguringRef.current = false;
+        setIsFiguring(false);
+        pushHistoryRef.current(layersRef.current);
+        figuringLayerId.current = null;
+        figureStartRef.current = null;
+        return;
+      }
       if (isDrawingRef.current) {
         isDrawingRef.current = false;
         setIsDrawing(false);
@@ -430,7 +933,6 @@ export default function ImageEditor() {
       } else if (
         (e.key === "Delete" || e.key === "Backspace") &&
         selectedId &&
-        // Don't intercept Backspace/Delete when user is typing inside the textarea
         selectedIdRef.current &&
         layersRef.current.find((l) => l.id === selectedIdRef.current)?.type !==
           "text"
@@ -445,7 +947,7 @@ export default function ImageEditor() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [undo, redo, selectedId]);
 
-  // Canvas render — skips the selected text layer so the textarea overlay is the source of truth
+  // Canvas render
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -458,12 +960,11 @@ export default function ImageEditor() {
       ctx.fillStyle = "#1a1d26";
       ctx.fillRect(0, 0, canvasSize.w, canvasSize.h);
     }
-    // Skip the selected text layer — it is rendered via the textarea overlay instead
     const skipId = selectedTextLayer ? selectedId : null;
     renderLayers(ctx, layers, canvasSize.w, canvasSize.h, skipId);
   }, [image, layers, canvasSize, selectedId, selectedTextLayer]);
 
-  // Canvas sizing via ResizeObserver
+  // Canvas sizing
   useEffect(() => {
     if (!image || !containerRef.current) return;
     const container = containerRef.current;
@@ -540,28 +1041,31 @@ export default function ImageEditor() {
           );
           if (dist <= layer.thickness / 2 + 8) return layer.id;
         }
+      } else if (layer.type === "figure") {
+        const cx = layer.x;
+        const cy = layer.y;
+        const hw = layer.width / 2 + 8 / cw;
+        const hh = layer.height / 2 + 8 / ch;
+        if (nx >= cx - hw && nx <= cx + hw && ny >= cy - hh && ny <= cy + hh) {
+          return layer.id;
+        }
       }
     }
     return null;
   }, []);
 
-  // Commit the currently selected text layer to history (if it exists).
-  // Called before switching selection or creating a new element — same as how
-  // finishing a stroke commits it via handleMouseUp.
   const commitSelectedText = useCallback(() => {
     const sid = selectedIdRef.current;
     if (!sid) return;
     const layer = layersRef.current.find((l) => l.id === sid);
     if (!layer || layer.type !== "text") return;
     if ((layer as TextLayer).content.trim() === "") {
-      // Discard empty textboxes
       pushHistoryRef.current(layersRef.current.filter((l) => l.id !== sid));
     } else {
       pushHistoryRef.current(layersRef.current);
     }
   }, []);
 
-  // Focus the textarea after a text layer is selected
   const focusTextarea = useCallback(() => {
     setTimeout(() => {
       const ta = textareaRef.current;
@@ -581,8 +1085,6 @@ export default function ImageEditor() {
     const nx = (e.clientX - rect.left) / rect.width;
     const ny = (e.clientY - rect.top) / rect.height;
 
-    // If a text layer is currently selected, commit it before changing selection.
-    // This is equivalent to how a stroke is committed in handleMouseUp.
     const currentSid = selectedIdRef.current;
     const currentLayer = currentSid
       ? layersRef.current.find((l) => l.id === currentSid)
@@ -599,14 +1101,12 @@ export default function ImageEditor() {
 
     const hit = hitTest(nx, ny);
     if (hit) {
-      // Selecting an existing layer — identical logic for strokes and text
       setSelectedId(hit);
       const hitLayer = layersRef.current.find((l) => l.id === hit);
       if (hitLayer?.type === "text") focusTextarea();
       return;
     }
 
-    // Clicked on empty canvas — deselect and possibly create a new element
     setSelectedId(null);
 
     if (tool === "text") {
@@ -619,6 +1119,7 @@ export default function ImageEditor() {
         fontFamily,
         fontSize,
         color,
+        rotation: 0,
       };
       setLayers((prev) => [...prev, newLayer]);
       setSelectedId(newLayer.id);
@@ -636,14 +1137,28 @@ export default function ImageEditor() {
       drawingLayerId.current = newLayer.id;
       setLayers((prev) => [...prev, newLayer]);
       setSelectedId(newLayer.id);
+    } else if (tool === "figure") {
+      isFiguringRef.current = true;
+      setIsFiguring(true);
+      figureStartRef.current = { nx, ny };
+      const newLayer: FigureLayer = {
+        id: uid(),
+        type: "figure",
+        shape: selectedShape,
+        x: nx,
+        y: ny,
+        width: 0,
+        height: 0,
+        rotation: 0,
+        color,
+      };
+      figuringLayerId.current = newLayer.id;
+      setLayers((prev) => [...prev, newLayer]);
+      setSelectedId(newLayer.id);
     }
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    // Drawing is now handled by the document-level mousemove listener
-    // to prevent the overlay drag handle from intercepting mouse events.
-    // This canvas handler is kept as a fallback but the document handler
-    // is the authoritative source during drawing.
     if (!isDrawing || !drawingLayerId.current) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -660,8 +1175,7 @@ export default function ImageEditor() {
   };
 
   const handleMouseUp = () => {
-    // Drawing commit is now handled by the document-level mouseup listener.
-    // This canvas handler is intentionally a no-op to avoid double-committing.
+    // Handled by document-level mouseup
   };
 
   const startHandleDrag = (e: React.MouseEvent, layerId: string) => {
@@ -673,14 +1187,68 @@ export default function ImageEditor() {
       layerId,
       startMouseX: e.clientX,
       startMouseY: e.clientY,
-      origX: layer.type === "text" ? layer.x : undefined,
-      origY: layer.type === "text" ? layer.y : undefined,
+      origX:
+        layer.type === "text" || layer.type === "figure" ? layer.x : undefined,
+      origY:
+        layer.type === "text" || layer.type === "figure" ? layer.y : undefined,
       origPoints:
         layer.type === "stroke"
           ? layer.points.map((p) => ({ ...p }))
           : undefined,
     };
     setIsDraggingHandle(true);
+  };
+
+  const startResizeDrag = (e: React.MouseEvent, layerId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const layer = layersRef.current.find((l) => l.id === layerId);
+    if (!layer) return;
+    resizeDragStateRef.current = {
+      layerId,
+      startMouseX: e.clientX,
+      startMouseY: e.clientY,
+      origWidth: layer.type === "figure" ? layer.width : undefined,
+      origHeight: layer.type === "figure" ? layer.height : undefined,
+      origPoints:
+        layer.type === "stroke"
+          ? layer.points.map((p) => ({ ...p }))
+          : undefined,
+      origFontSize: layer.type === "text" ? layer.fontSize : undefined,
+    };
+  };
+
+  const startRotateDrag = (
+    e: React.MouseEvent,
+    layerId: string,
+    bounds: { x: number; y: number; w: number; h: number },
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const layer = layersRef.current.find((l) => l.id === layerId);
+    if (!layer) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    // Center in normalized coords from bounds
+    const centerNX = (bounds.x + bounds.w / 2) / canvasSize.w;
+    const centerNY = (bounds.y + bounds.h / 2) / canvasSize.h;
+    const rect = canvas.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) / rect.width;
+    const my = (e.clientY - rect.top) / rect.height;
+    const startAngle = Math.atan2(my - centerNY, mx - centerNX);
+    rotateDragStateRef.current = {
+      layerId,
+      centerNX,
+      centerNY,
+      startAngle,
+      origRotation: layer.type === "figure" ? layer.rotation : undefined,
+      origPoints:
+        layer.type === "stroke"
+          ? layer.points.map((p) => ({ ...p }))
+          : undefined,
+      origTextRotation:
+        layer.type === "text" ? (layer.rotation ?? 0) : undefined,
+    };
   };
 
   const deleteSelected = () => {
@@ -723,11 +1291,10 @@ export default function ImageEditor() {
     }, "image/png");
   }, [image, imageFile, actor]);
 
-  // Selection bounds for strokes only — text layers show their own textarea outline.
-  // Hide selection overlay while actively drawing to prevent the drag handle
-  // from intercepting mousemove/mouseleave events and breaking the draw gesture.
+  // Selection bounds for stroke/figure layers
   const selBounds = useMemo(() => {
-    if (!selectedId || selectedTextLayer || isDrawing) return null;
+    if (!selectedId || selectedTextLayer || isDrawing || isFiguring)
+      return null;
     const canvas = canvasRef.current;
     if (!canvas) return null;
     const ctx = canvas.getContext("2d");
@@ -735,7 +1302,14 @@ export default function ImageEditor() {
     const layer = layers.find((l) => l.id === selectedId);
     if (!layer) return null;
     return getLayerBounds(layer, canvasSize.w, canvasSize.h, ctx);
-  }, [selectedId, selectedTextLayer, isDrawing, layers, canvasSize]);
+  }, [
+    selectedId,
+    selectedTextLayer,
+    isDrawing,
+    isFiguring,
+    layers,
+    canvasSize,
+  ]);
 
   const textAreaWidth = useMemo(() => {
     if (!selectedTextLayer) return 80;
@@ -750,6 +1324,22 @@ export default function ImageEditor() {
       Math.max(...lines.map((l) => ctx.measureText(l).width)) + 20,
     );
   }, [selectedTextLayer]);
+
+  // Bounds for text layer handle placement
+  const textHandleBounds = useMemo(() => {
+    if (!selectedTextLayer) return null;
+    const lines = selectedTextLayer.content.split("\n");
+    const textH = Math.max(
+      lines.length * selectedTextLayer.fontSize * 1.2,
+      selectedTextLayer.fontSize * 1.2,
+    );
+    return {
+      x: selectedTextLayer.x * canvasSize.w - TEXT_PAD,
+      y: selectedTextLayer.y * canvasSize.h - TEXT_PAD,
+      w: textAreaWidth + TEXT_PAD * 2,
+      h: textH + TEXT_PAD * 2,
+    };
+  }, [selectedTextLayer, textAreaWidth, canvasSize]);
 
   const canUndo = historyIndex > 0;
   const canRedo = historyIndex < history.length - 1;
@@ -766,9 +1356,6 @@ export default function ImageEditor() {
         <header
           className="relative flex items-center px-3 border-b border-border toolbar-glass z-20 h-14 flex-shrink-0"
           onMouseDown={(e) => {
-            // Prevent the textarea from losing focus when the user clicks any
-            // header control. This keeps the text layer selected so property
-            // changes (color, font, size) are applied to it immediately.
             if (selectedTextLayer) {
               const target = e.target as HTMLElement;
               if (
@@ -800,7 +1387,9 @@ export default function ImageEditor() {
                     data-ocid="toolbar.draw_button"
                     variant="ghost"
                     size="sm"
-                    className={`h-7 w-7 p-0 ${tool === "draw" ? "tool-btn-active" : ""}`}
+                    className={`h-7 w-7 p-0 ${
+                      tool === "draw" ? "tool-btn-active" : ""
+                    }`}
                     onClick={() => setTool("draw")}
                   >
                     <Pencil className="w-4 h-4" />
@@ -814,7 +1403,9 @@ export default function ImageEditor() {
                     data-ocid="toolbar.text_button"
                     variant="ghost"
                     size="sm"
-                    className={`h-7 w-7 p-0 ${tool === "text" ? "tool-btn-active" : ""}`}
+                    className={`h-7 w-7 p-0 ${
+                      tool === "text" ? "tool-btn-active" : ""
+                    }`}
                     onClick={() => setTool("text")}
                   >
                     <Type className="w-4 h-4" />
@@ -822,6 +1413,69 @@ export default function ImageEditor() {
                 </TooltipTrigger>
                 <TooltipContent>Text tool</TooltipContent>
               </Tooltip>
+              {/* Figure tool button + picker */}
+              <Popover>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <PopoverTrigger asChild>
+                      <Button
+                        data-ocid="toolbar.figure_button"
+                        variant="ghost"
+                        size="sm"
+                        className={`h-7 w-7 p-0 ${
+                          tool === "figure" ? "tool-btn-active" : ""
+                        }`}
+                        onClick={() => setTool("figure")}
+                      >
+                        <Shapes className="w-4 h-4" />
+                      </Button>
+                    </PopoverTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent>Figure tool</TooltipContent>
+                </Tooltip>
+                <PopoverContent
+                  className="w-48 p-3"
+                  side="bottom"
+                  align="center"
+                  onMouseDown={(e) => {
+                    if (selectedTextLayer) {
+                      const target = e.target as HTMLElement;
+                      if (
+                        target.tagName !== "INPUT" &&
+                        !target.closest("input")
+                      ) {
+                        e.preventDefault();
+                      }
+                    }
+                  }}
+                >
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {FIGURE_SHAPES.map((s) => {
+                      const isActive = s.id === selectedShape;
+                      return (
+                        <button
+                          key={s.id}
+                          type="button"
+                          title={s.label}
+                          className="w-12 h-12 rounded-md hover:bg-muted transition-colors flex items-center justify-center focus:outline-none"
+                          style={{
+                            outline: isActive
+                              ? "2px solid hsl(var(--primary))"
+                              : "none",
+                            outlineOffset: isActive ? "2px" : undefined,
+                          }}
+                          onClick={() => {
+                            setSelectedShape(s.id);
+                            setTool("figure");
+                          }}
+                        >
+                          <ShapeIcon shape={s.id} />
+                        </button>
+                      );
+                    })}
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
 
             {/* Color picker */}
@@ -843,7 +1497,6 @@ export default function ImageEditor() {
                       side="bottom"
                       align="center"
                       onMouseDown={(e) => {
-                        // Prevent losing focus when interacting with the color picker
                         if (selectedTextLayer) {
                           const target = e.target as HTMLElement;
                           if (
@@ -899,7 +1552,7 @@ export default function ImageEditor() {
               <TooltipContent>Color</TooltipContent>
             </Tooltip>
 
-            {/* Font options — shown when text tool active or a text layer is selected */}
+            {/* Font options */}
             {(tool === "text" || selectedTextLayer) && (
               <>
                 <Select
@@ -964,8 +1617,11 @@ export default function ImageEditor() {
               </>
             )}
 
-            {/* Thickness slider — shown when draw tool active or a stroke is selected */}
-            {(tool === "draw" || selectedLayer?.type === "stroke") && (
+            {/* Thickness slider */}
+            {(tool === "draw" ||
+              tool === "figure" ||
+              selectedLayer?.type === "stroke" ||
+              selectedLayer?.type === "figure") && (
               <div className="flex items-center gap-2 flex-shrink-0">
                 <span className="text-xs text-muted-foreground">Size</span>
                 <Slider
@@ -1143,21 +1799,24 @@ export default function ImageEditor() {
                 height={canvasSize.h}
                 className="block rounded-sm"
                 style={{
-                  cursor: tool === "text" ? "text" : "crosshair",
+                  cursor:
+                    tool === "text"
+                      ? "text"
+                      : tool === "figure"
+                        ? "crosshair"
+                        : "crosshair",
                   touchAction: "none",
                   userSelect: "none",
                 }}
                 onMouseDown={handleMouseDown}
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
-                // onMouseLeave intentionally removed — drawing is now tracked
-                // at document level so leaving the canvas mid-draw doesn't stop it.
               />
 
-              {/* Stroke selection overlay — hidden while actively drawing to prevent
-                  the drag handle from intercepting mouse events during the gesture. */}
+              {/* Stroke/Figure selection overlay */}
               {selBounds && selectedId && (
                 <>
+                  {/* Drag handle */}
                   <div
                     data-ocid="editor.drag_handle"
                     className="absolute z-20 bg-primary rounded-t-sm select-none overflow-hidden"
@@ -1173,6 +1832,7 @@ export default function ImageEditor() {
                   >
                     <DragHandleDots />
                   </div>
+                  {/* Selection border */}
                   <div
                     className="absolute z-10 pointer-events-none"
                     style={{
@@ -1185,14 +1845,35 @@ export default function ImageEditor() {
                       outlineOffset: "2px",
                     }}
                   />
+                  {/* Rotate handle — upper-left */}
+                  <CornerHandle
+                    title="Rotate"
+                    cursor="crosshair"
+                    style={{
+                      left: selBounds.x - 7,
+                      top: selBounds.y - 7,
+                    }}
+                    onMouseDown={(e) =>
+                      startRotateDrag(e, selectedId, selBounds)
+                    }
+                  />
+                  {/* Resize handle — upper-right */}
+                  <CornerHandle
+                    title="Resize"
+                    cursor="nwse-resize"
+                    style={{
+                      left: selBounds.x + Math.max(selBounds.w, 20) - 7,
+                      top: selBounds.y - 7,
+                    }}
+                    onMouseDown={(e) => startResizeDrag(e, selectedId)}
+                  />
                 </>
               )}
 
-              {/* Text layer overlay — shown whenever a text layer is selected.
-                  The textarea IS the editing surface; onBlur is intentionally a
-                  no-op so that clicking header controls never deselects the layer. */}
+              {/* Text layer overlay */}
               {selectedTextLayer && (
                 <>
+                  {/* Drag handle */}
                   <div
                     data-ocid="editor.drag_handle"
                     className="absolute z-20 bg-primary rounded-t-sm select-none overflow-hidden"
@@ -1211,6 +1892,7 @@ export default function ImageEditor() {
                   >
                     <DragHandleDots />
                   </div>
+                  {/* Textarea */}
                   <textarea
                     ref={textareaRef}
                     value={selectedTextLayer.content}
@@ -1227,9 +1909,6 @@ export default function ImageEditor() {
                       ta.style.height = "auto";
                       ta.style.height = `${ta.scrollHeight}px`;
                     }}
-                    // Intentionally no onBlur — focus loss (e.g. clicking a header
-                    // control) must NOT deselect the layer. Selection is managed
-                    // exclusively by handleMouseDown on the canvas.
                     onKeyDown={(e) => {
                       if (e.key === "Escape") {
                         e.preventDefault();
@@ -1254,10 +1933,46 @@ export default function ImageEditor() {
                       border: "1.5px dashed rgba(255,255,255,0.85)",
                       outline: "1.5px dashed rgba(0,0,0,0.75)",
                       outlineOffset: "2px",
+                      transform: selectedTextLayer.rotation
+                        ? `rotate(${selectedTextLayer.rotation}rad)`
+                        : undefined,
+                      transformOrigin: "top left",
                     }}
                     rows={1}
                     spellCheck={false}
                   />
+                  {/* Rotate handle — upper-left of text */}
+                  {textHandleBounds && (
+                    <CornerHandle
+                      title="Rotate"
+                      cursor="crosshair"
+                      style={{
+                        left: textHandleBounds.x - 7,
+                        top: textHandleBounds.y - 7,
+                      }}
+                      onMouseDown={(e) =>
+                        startRotateDrag(
+                          e,
+                          selectedTextLayer.id,
+                          textHandleBounds,
+                        )
+                      }
+                    />
+                  )}
+                  {/* Resize handle — upper-right of text */}
+                  {textHandleBounds && (
+                    <CornerHandle
+                      title="Resize"
+                      cursor="nwse-resize"
+                      style={{
+                        left: textHandleBounds.x + textHandleBounds.w - 7,
+                        top: textHandleBounds.y - 7,
+                      }}
+                      onMouseDown={(e) =>
+                        startResizeDrag(e, selectedTextLayer.id)
+                      }
+                    />
+                  )}
                 </>
               )}
 
